@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+
+    #main-container {
+      display: flex;
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 20px;
+    }
+
+    #chart-container {
+      flex: 1;
+      margin-right: 20px;
+    }
+
+    #chart {
+      display: block;
+      margin: 0 auto;
+      border: 1px solid #ccc;
+    }
+#sidebar {
+  width: 380px;
+  background: #2c2f33;
+  color: #ddd;
+  border: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  padding: 10px;
+  padding-bottom: 20px;
+  margin-top: -35px;
+  margin-bottom: 10px;   
+}
+
+#sidebar h2 {
+  font-size: 34px;
+  margin-top: 1px;
+  margin-bottom: 10px;
+  color: #FF9300;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+label {
+  display: block;
+  font-size: 24px;
+  margin-bottom: 12px;
+  color: #ccc;
+}
+
+input[type="number"] {
+  opacity: 1;
+  width: 100%;
+  padding: 12px;
+  font-size: 26px;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+input[type="number"]:focus {
+  outline: none;
+  border-color: #66afe9;
+  box-shadow: 0 0 8px rgba(102, 175, 233, 0.8);
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button  {  
+   -webkit-appearance: inner-spin-button;  width: 20px;
+  opacity: 9;
+  height: auto;
+  display: block;
+  margin: 0;
+}
+
+.checkbox-label {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 36px;
+      color: #333;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+
+    button {
+      padding: 6px 30px;
+      font-size: 30px; 
+ 	  width: 100%;
+      background-color: #007bff;
+      border: none;
+      color: white;
+      cursor: pointer;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    #button2 {
+      padding: 6px 32px;
+      font-size: 30px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 5px;
+    }
+
+    #button2:hover {
+      background-color: #218838;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div id="main-container">
+    <div id="chart-container">
+      <canvas id="chart" width="1620" height="800"></canvas>
+    </div>
+    <div id="sidebar">
+      <h2>Controls</h2>
+
+      <label for="start-x">Starting Longitude°:</label>
+      <input type="number" id="start-x" step="0.1" value="270">
+
+      <label for="start-y">Starting Latitude°:</label>
+      <input type="number" id="start-y" step="0.1" value="-6.6">
+
+      <label for="steps">Number of Steps:</label>
+      <input type="number" id="steps" value="10">
+
+      <label for="step-size">Step Size - Longitude°:</label>
+      <input type="number" id="step-size" step="0.1" value="1">
+
+      <!-- Inputs now interpreted as phiSouth and phiNorth -->
+      <label for="phi-min">Phi Min (South):</label>
+      <input type="number" id="phi-min" step="0.1" value="-0.5">
+
+      <label for="phi-max">Phi Max (North):</label>
+      <input type="number" id="phi-max" step="0.1" value="-1.2">
+
+      <button onclick="startPathCalculation()">Calculate Path</button>
+
+      <button id="button2" onclick="exportToCSV()"style="margin-bottom:30px;">Export to CSV</button>
+      
+   
+      
+      <div class="checkbox-label">
+        <input type="checkbox" id="show-sinusoidal" checked>
+        <label for="show-sinusoidal" style="margin:0;">Show Sinusoidal Line</label>
+      </div>
+
+      <div class="checkbox-label">
+        <input type="checkbox" id="show-start-marker" checked>
+        <label for="show-start-marker" style="margin:0;">Show Starting Marker</label>
+      </div>
+
+      <div class="checkbox-label">
+        <input type="checkbox" id="show-calculated-path" checked>
+        <label for="show-calculated-path" style="margin:0;">Show Calculated Path</label>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Chart constants
+    const minX = 270;
+    const maxX = 320;
+    const A = 4.1;       // amplitude
+    const f = 0.63;      // frequency factor used in original code
+    // Convert frequency f to angular frequency w
+    const w = (2 * Math.PI * f) / (maxX - minX);
+    
+    // Offsets for south and north lines
+    const cSouth = -15.1 - 0.8*10;  // baseline offset for 'south' line
+    const cNorth = -15.1 + 1.3*10;  // baseline offset for 'north' line
+
+    // Sinusoidal function
+    // x in degrees, A, w, phi, c as parameters
+    function sinusoidal(x, A, w, phi, c) {
+      return A * Math.sin(w * x + phi) + c;
+    }
+
+    function calculatePath(startX, startY, steps, stepSize, phiSouth, phiNorth) {
+      // Clear previous path markers
+      chart.data.datasets[2].data = [];
+
+      // Compute the south and north line values at the startX
+      const y_south_start = sinusoidal(startX, A, w, phiSouth, cSouth);
+      const y_north_start = sinusoidal(startX, A, w, phiNorth, cNorth);
+
+      // Determine ratio of how far startY is between these two lines
+      const ratio = (startY - y_south_start) / (y_north_start - y_south_start);
+
+      // Generate the blended sinusoidal line
+      const linePoints = [];
+      for (let x = minX; x <= maxX; x += 0.1) {
+        const y_south = sinusoidal(x, A, w, phiSouth, cSouth);
+        const y_north = sinusoidal(x, A, w, phiNorth, cNorth);
+        const y_final = y_south + ratio * (y_north - y_south);
+        linePoints.push({ x, y: y_final });
+      }
+      chart.data.datasets[0].data = linePoints;
+
+      // Calculate the path markers
+      for (let i = 0; i < steps; i++) {
+        const nextX = startX + i * stepSize;
+        const y_south = sinusoidal(nextX, A, w, phiSouth, cSouth);
+        const y_north = sinusoidal(nextX, A, w, phiNorth, cNorth);
+        const nextY = y_south + ratio * (y_north - y_south);
+
+        chart.data.datasets[2].data.push({ x: nextX, y: nextY });
+      }
+
+      // Mark the starting coordinate
+      chart.data.datasets[1].data = [{ x: startX, y: startY }];
+
+      // Update the chart
+      chart.update();
+    }
+
+    function startPathCalculation() {
+      const startX = parseFloat(document.getElementById("start-x").value);
+      const startY = parseFloat(document.getElementById("start-y").value);
+      const steps = parseInt(document.getElementById("steps").value);
+      const stepSize = parseFloat(document.getElementById("step-size").value);
+
+      // Interpret phi-min and phi-max as phiSouth and phiNorth
+      const phiSouth = parseFloat(document.getElementById("phi-min").value);
+      const phiNorth = parseFloat(document.getElementById("phi-max").value);
+
+      if (isNaN(startX) || isNaN(startY) || isNaN(steps) || isNaN(stepSize) || isNaN(phiSouth) || isNaN(phiNorth)) {
+        alert("Please ensure all inputs are valid numbers.");
+        return;
+      }
+
+      calculatePath(startX, startY, steps, stepSize, phiSouth, phiNorth);
+    }
+
+    function exportToCSV() {
+      if (!chart || !chart.data.datasets[2].data.length) {
+          alert("No data to export. Please calculate the path first.");
+          return;
+      }
+
+      const calculatedPathData = chart.data.datasets[2].data;
+
+      let csvContent = "Longitude (°E),Latitude (°),Azimuth (°)\n";
+      calculatedPathData.forEach(point => {
+          const xValue = point.x;
+          const yValue = point.y;
+
+          // To compute azimuth, we need the derivative dy/dx of the final line at xValue
+          // Derivative of the blended line = blend of derivatives
+          // dy/dx for sinusoidal(x): d/dx [A*sin(w*x+phi)] = A*w*cos(w*x+phi)
+          // Compute south and north derivatives:
+          const dy_dx_south = A * w * Math.cos(w*xValue + parseFloat(document.getElementById("phi-min").value));
+          const dy_dx_north = A * w * Math.cos(w*xValue + parseFloat(document.getElementById("phi-max").value));
+          // Compute ratio at this x (same ratio as at start since ratio is constant)
+          const y_south_here = sinusoidal(xValue, A, w, parseFloat(document.getElementById("phi-min").value), cSouth);
+          const y_north_here = sinusoidal(xValue, A, w, parseFloat(document.getElementById("phi-max").value), cNorth);
+          const ratio = (yValue - y_south_here) / (y_north_here - y_south_here);
+          const dy_dx_final = dy_dx_south + ratio * (dy_dx_north - dy_dx_south);
+
+          // Compute azimuth
+          const theta_deg = (Math.atan(dy_dx_final) * 180) / Math.PI;
+          const azimuth = (90 - theta_deg) % 360;
+
+          csvContent += `${xValue.toFixed(2)},${yValue.toFixed(2)},${azimuth.toFixed(2)}\n`;
+      });
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "calculated_path.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    const ctx = document.getElementById("chart").getContext("2d");
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            label: "Sinusoidal Line",
+            data: [],
+            fill: false,
+            borderColor: "#FF9300",
+            backgroundColor: "#FF9300",
+            borderWidth: 3,
+            pointRadius: 0,
+          },
+          {
+            label: "Starting Marker",
+            data: [],
+            borderColor: "#FF9300",
+            backgroundColor: "#FF9300",
+            pointRadius: 8,
+            pointStyle: 'circle',
+          },
+          {
+            label: "Calculated Path",
+            data: [],
+            borderColor: "white",
+            borderWidth: 2,
+            backgroundColor: "white",
+            pointStyle: "cross",
+            pointRadius: 15,
+            pointHoverRadius: 12,
+            showLine: false,
+          },
+        ],
+      },
+      options: {
+        scales: {
+          x: {
+            type: "linear",
+            min: 270,
+            max: 320,
+            grid: {
+              lineWidth: 1,
+              color: "white",
+            },
+            ticks: {
+            font: {
+          	size: 20  // Increase this to make the font larger
+        	},              
+        	stepSize: 5,
+              color: "white",
+              callback: function(value) {
+                return value + "°E";
+              },
+            },
+          },
+          y: {
+            type: "linear",
+            min: -20,
+            max: 4,
+            grid: {
+              lineWidth: 1,
+              color: "white",
+            },
+            ticks: {
+             font: {
+          	size: 20  // Increase this to make the font larger
+        	},              
+        	stepSize: 5,
+              color: "white",
+              callback: function(value) {
+                return Math.abs(value) + (value >= 0 ? "°N" : "°S");
+              },
+            },
+          },
+        },
+        plugins: {
+          legend: {
+            position: "bottom",
+            display: false,
+          },
+          tooltip: {
+            bodyFont: {
+              size: 24
+            },
+            callbacks: {
+              labelColor: function(context) {
+                if (context.datasetIndex === 0) {
+                  return {
+                    borderColor: '#FF9300',
+                    backgroundColor: '#FF9300'
+                  };
+                } else {
+                  return {
+                    borderColor: context.dataset.borderColor,
+                    backgroundColor: context.dataset.backgroundColor
+                  };
+                }
+              },
+              label: function(context) {
+                const xValue = context.parsed.x;
+                const yValue = context.parsed.y;
+
+                // Compute derivative at xValue for tooltip:
+                const phiSouth = parseFloat(document.getElementById("phi-min").value);
+                const phiNorth = parseFloat(document.getElementById("phi-max").value);
+                const y_south = sinusoidal(xValue, A, w, phiSouth, cSouth);
+                const y_north = sinusoidal(xValue, A, w, phiNorth, cNorth);
+                const ratio = (yValue - y_south) / (y_north - y_south);
+
+                const dy_dx_south = A * w * Math.cos(w*xValue + phiSouth);
+                const dy_dx_north = A * w * Math.cos(w*xValue + phiNorth);
+                const dy_dx_final = dy_dx_south + ratio*(dy_dx_north - dy_dx_south);
+
+                const theta_deg = (Math.atan(dy_dx_final) * 180) / Math.PI;
+                const azimuth = (90 - theta_deg) % 360;
+
+                const azimuthFormatted = azimuth.toFixed(2);
+                const yFormatted = yValue.toFixed(2);
+                const xFormatted = xValue.toFixed(2);
+
+                return `Longitude: ${xFormatted}°E, Latitude: ${yFormatted}°, Azimuth: ${azimuthFormatted}°`;
+              }
+            }
+          }
+        },
+      },
+    });
+
+    document.getElementById("show-sinusoidal").addEventListener("change", function() {
+      chart.setDatasetVisibility(0, this.checked);
+      chart.update();
+    });
+
+    document.getElementById("show-start-marker").addEventListener("change", function() {
+      chart.setDatasetVisibility(1, this.checked);
+      chart.update();
+    });
+
+    document.getElementById("show-calculated-path").addEventListener("change", function() {
+      chart.setDatasetVisibility(2, this.checked);
+      chart.update();
+    });
+
+    document.addEventListener("DOMContentLoaded", function() {
+      startPathCalculation();
+    });
+   
+      // Bind the generatePlot function to the page load event
+    window.addEventListener('load', generatePlot);  
+  
+ </script>
+    </body> 
+</html>
+
+
+	
